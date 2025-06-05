@@ -1,93 +1,54 @@
 import streamlit as st
 import pandas as pd
-from graphviz import Digraph
+import networkx as nx
+import matplotlib.pyplot as plt
 
-st.set_page_config(layout="wide")
-st.title("🗂️ Navigation hiérarchique dans un organigramme")
+# Charger le fichier CSV
+def load_data(file):
+    return pd.read_csv(file)
 
-uploaded_file = st.file_uploader("Importe ton fichier Excel ou CSV", type=["csv", "xlsx"])
+# Dessiner l'organigramme
+def draw_org_chart(df, parent_id=None):
+    G = nx.DiGraph()
 
-if uploaded_file:
-    if uploaded_file.name.endswith(".csv"):
-        df = pd.read_csv(uploaded_file)
+    if parent_id is None:
+        # Trouver le niveau 0
+        root_nodes = df[df['parent_id'].isna()]
     else:
-        df = pd.read_excel(uploaded_file)
-    
-    df = df.fillna("")
+        root_nodes = df[df['id'] == parent_id]
 
-    st.subheader("Aperçu du tableau")
-    st.dataframe(df)
+    for _, row in root_nodes.iterrows():
+        G.add_node(row['id'])
+        children = df[df['parent_id'] == row['id']]
+        for _, child in children.iterrows():
+            G.add_node(child['id'])
+            G.add_edge(row['id'], child['id'])
 
-    level_names = df.columns.tolist()
-    max_depth = len(level_names)
+    pos = nx.spring_layout(G)
+    plt.figure(figsize=(10, 8))
+    nx.draw(G, pos, with_labels=True, node_size=3000, node_color='skyblue', font_size=10, font_weight='bold', arrowsize=20)
+    st.pyplot(plt)
 
-    # --- SESSION STATE ---
-    if "current_level" not in st.session_state:
-        st.session_state.current_level = 0
-    if "history" not in st.session_state:
-        st.session_state.history = []
-    if "current_value" not in st.session_state:
-        st.session_state.current_value = None
+# Interface Streamlit
+def main():
+    st.title("Organigramme Interactif")
 
-    level = st.session_state.current_level
-    current_col = level_names[level]
+    uploaded_file = st.file_uploader("Choisissez un fichier CSV", type="csv")
+    if uploaded_file is not None:
+        data = load_data(uploaded_file)
 
-    if st.session_state.current_value:
-        st.markdown(f"### Niveau **{current_col}** → _{st.session_state.current_value}_")
+        if 'id' not in data.columns or 'parent_id' not in data.columns:
+            st.error("Le fichier CSV doit contenir les colonnes 'id' et 'parent_id'.")
+            return
 
-    # Affichage des enfants du niveau courant
-    if level < max_depth - 1:
-        child_col = level_names[level + 1]
-        if st.session_state.current_value:
-            children_df = df[df[current_col] == st.session_state.current_value][[current_col, child_col]]
-        else:
-            children_df = df[[current_col, child_col]]
+        parent_id = st.selectbox("Sélectionnez un nœud", options=[None] + list(data['id'].unique()))
 
-        children_df = children_df.dropna()
-        children_df = children_df[(children_df[current_col] != "") & (children_df[child_col] != "")]
-        children = sorted(children_df[child_col].unique())
+        if st.button("Remonter d'un niveau"):
+            if parent_id is not None:
+                parent_row = data[data['id'] == parent_id].iloc[0]
+                parent_id = parent_row['parent_id'] if pd.notna(parent_row['parent_id']) else None
 
-        if children:
-            selected_child = st.selectbox(f"Sélectionne un enfant du niveau '{child_col}'", [""] + children)
+        draw_org_chart(data, parent_id)
 
-            col1, col2 = st.columns(2)
-            with col1:
-                if selected_child and st.button("🔽 Descendre à l'enfant"):
-                    st.session_state.history.append((level, st.session_state.current_value))
-                    st.session_state.current_level += 1
-                    st.session_state.current_value = selected_child
-                    st.experimental_rerun()
-
-            with col2:
-                if st.session_state.history and st.button("🔼 Remonter"):
-                    prev_level, prev_value = st.session_state.history.pop()
-                    st.session_state.current_level = prev_level
-                    st.session_state.current_value = prev_value
-                    st.experimental_rerun()
-        else:
-            st.info("Aucun enfant à afficher à ce niveau.")
-            if st.session_state.history and st.button("🔼 Remonter"):
-                prev_level, prev_value = st.session_state.history.pop()
-                st.session_state.current_level = prev_level
-                st.session_state.current_value = prev_value
-                st.experimental_rerun()
-    else:
-        st.info("Dernier niveau atteint.")
-        if st.session_state.history and st.button("🔼 Remonter"):
-            prev_level, prev_value = st.session_state.history.pop()
-            st.session_state.current_level = prev_level
-            st.session_state.current_value = prev_value
-            st.experimental_rerun()
-
-    # --- Affichage Graphviz du chemin parcouru ---
-    st.subheader("📊 Organigramme partiel")
-    dot = Digraph()
-
-    path = [val for _, val in st.session_state.history]
-    if st.session_state.current_value:
-        path.append(st.session_state.current_value)
-
-    for i in range(len(path) - 1):
-        dot.edge(path[i], path[i + 1])
-
-    st.graphviz_chart(dot)
+if __name__ == "__main__":
+    main()
