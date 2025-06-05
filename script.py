@@ -3,7 +3,7 @@ import pandas as pd
 from graphviz import Digraph
 
 st.set_page_config(layout="wide")
-st.title("🗂️ Visualisateur d'organigramme dynamique")
+st.title("🗂️ Navigation hiérarchique dans un organigramme")
 
 uploaded_file = st.file_uploader("Importe ton fichier Excel ou CSV", type=["csv", "xlsx"])
 
@@ -21,27 +21,73 @@ if uploaded_file:
     level_names = df.columns.tolist()
     max_depth = len(level_names)
 
-    st.sidebar.header("🎯 Affichage par niveau parent")
+    # --- SESSION STATE ---
+    if "current_level" not in st.session_state:
+        st.session_state.current_level = 0
+    if "history" not in st.session_state:
+        st.session_state.history = []
+    if "current_value" not in st.session_state:
+        st.session_state.current_value = None
 
-    parent_level = st.sidebar.selectbox("Choisir le niveau parent", level_names[:-1])
-    parent_idx = level_names.index(parent_level)
+    level = st.session_state.current_level
+    current_col = level_names[level]
 
-    child_idx = parent_idx + 1
-    child_level = level_names[child_idx]
+    if st.session_state.current_value:
+        st.markdown(f"### Niveau **{current_col}** → _{st.session_state.current_value}_")
 
-    pairs_df = df[[parent_level, child_level]].dropna()
-    pairs_df = pairs_df[(pairs_df[parent_level] != "") & (pairs_df[child_level] != "")]
+    # Affichage des enfants du niveau courant
+    if level < max_depth - 1:
+        child_col = level_names[level + 1]
+        if st.session_state.current_value:
+            children_df = df[df[current_col] == st.session_state.current_value][[current_col, child_col]]
+        else:
+            children_df = df[[current_col, child_col]]
 
-    parents = sorted(pairs_df[parent_level].unique())
-    selected_parents = st.sidebar.multiselect(f"Sélectionner les éléments du niveau '{parent_level}'", parents, default=parents)
+        children_df = children_df.dropna()
+        children_df = children_df[(children_df[current_col] != "") & (children_df[child_col] != "")]
+        children = sorted(children_df[child_col].unique())
 
-    filtered_pairs = pairs_df[pairs_df[parent_level].isin(selected_parents)]
-    edges = set(filtered_pairs.itertuples(index=False, name=None))
+        if children:
+            selected_child = st.selectbox(f"Sélectionne un enfant du niveau '{child_col}'", [""] + children)
 
-    st.subheader("📊 Organigramme généré")
+            col1, col2 = st.columns(2)
+            with col1:
+                if selected_child and st.button("🔽 Descendre à l'enfant"):
+                    st.session_state.history.append((level, st.session_state.current_value))
+                    st.session_state.current_level += 1
+                    st.session_state.current_value = selected_child
+                    st.experimental_rerun()
 
+            with col2:
+                if st.session_state.history and st.button("🔼 Remonter"):
+                    prev_level, prev_value = st.session_state.history.pop()
+                    st.session_state.current_level = prev_level
+                    st.session_state.current_value = prev_value
+                    st.experimental_rerun()
+        else:
+            st.info("Aucun enfant à afficher à ce niveau.")
+            if st.session_state.history and st.button("🔼 Remonter"):
+                prev_level, prev_value = st.session_state.history.pop()
+                st.session_state.current_level = prev_level
+                st.session_state.current_value = prev_value
+                st.experimental_rerun()
+    else:
+        st.info("Dernier niveau atteint.")
+        if st.session_state.history and st.button("🔼 Remonter"):
+            prev_level, prev_value = st.session_state.history.pop()
+            st.session_state.current_level = prev_level
+            st.session_state.current_value = prev_value
+            st.experimental_rerun()
+
+    # --- Affichage Graphviz du chemin parcouru ---
+    st.subheader("📊 Organigramme partiel")
     dot = Digraph()
-    for parent, child in edges:
-        dot.edge(parent, child)
+
+    path = [val for _, val in st.session_state.history]
+    if st.session_state.current_value:
+        path.append(st.session_state.current_value)
+
+    for i in range(len(path) - 1):
+        dot.edge(path[i], path[i + 1])
 
     st.graphviz_chart(dot)
